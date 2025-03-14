@@ -1,0 +1,428 @@
+<html lang="zh"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 互動旋轉多種幾何體</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #000;
+        }
+        canvas { 
+            display: block; 
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+            background-color: #333;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="cube-btn" hidden>立方體</button>
+        <button id="tetra-btn" hidden>四面體</button>
+        <button id="sphere-btn" hidden>球體</button>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // 初始化場景、相機和渲染器
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 設置相機位置
+        camera.position.z = 15;
+
+        // 添加燈光
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(1, 1, 1);
+        scene.add(directionalLight);
+
+        // 創建幾何體
+        const geometries = {
+            cube: new THREE.BoxGeometry(1, 1, 1),
+            tetrahedron: new THREE.TetrahedronGeometry(0.8),
+            sphere: new THREE.SphereGeometry(0.6, 32, 32)
+        };
+
+        // 跟踪所有形狀
+        const shapes = [];
+        
+        // 當前選中的幾何體類型
+        let currentGeometryType = 'cube';
+        
+        // 相機控制變量
+        const cameraControls = {
+            moveSpeed: 0.5,
+            rotationSpeed: 0.02,
+            keys: {
+                ArrowUp: false,
+                ArrowDown: false,
+                ArrowLeft: false,
+                ArrowRight: false,
+                KeyW: false,
+                KeyS: false,
+                KeyA: false,
+                KeyD: false
+            }
+        };
+
+        // 創建形狀的函數
+        function createShape(type, x, y, z) {
+            // 為形狀創建隨機顏色
+            const color = new THREE.Color(Math.random(), Math.random(), Math.random());
+            const material = new THREE.MeshPhongMaterial({ color: color });
+            
+            const geometry = geometries[type];
+            const shape = new THREE.Mesh(geometry, material);
+            
+            // 設置位置
+            shape.position.x = x;
+            shape.position.y = y;
+            shape.position.z = z;
+            
+            // 設置隨機旋轉速度
+            shape.userData = {
+                type: type,
+                rotationSpeed: {
+                    x: Math.random() * 0.02 - 0.01,
+                    y: Math.random() * 0.02 - 0.01,
+                    z: Math.random() * 0.02 - 0.01
+                },
+                velocity: {
+                    x: 0,
+                    y: 0,
+                    z: 0
+                },
+                clicked: false,
+                clickTime: 0
+            };
+            
+            scene.add(shape);
+            shapes.push(shape);
+            
+            return shape;
+        }
+
+        // 初始化一些形狀
+        function initializeShapes() {
+            // 創建一些立方體
+            for (let i = 0; i < 4; i++) {
+                createShape('cube', 
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 5
+                );
+            }
+            
+            // 創建一些四面體
+            for (let i = 0; i < 3; i++) {
+                createShape('tetrahedron', 
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 5
+                );
+            }
+            
+            // 創建一些球體
+            for (let i = 0; i < 3; i++) {
+                createShape('sphere', 
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 5
+                );
+            }
+        }
+
+        // 初始化形狀
+        initializeShapes();
+
+        // 生成隨機單位向量的函數
+        function getRandomDirection() {
+            // 產生隨機角度
+            const theta = Math.random() * Math.PI * 2; // 0 到 2π
+            const phi = Math.random() * Math.PI; // 0 到 π
+            
+            // 將球坐標轉換為笛卡爾坐標
+            const x = Math.sin(phi) * Math.cos(theta);
+            const y = Math.sin(phi) * Math.sin(theta);
+            const z = Math.cos(phi);
+            
+            // 創建並返回單位向量
+            return new THREE.Vector3(x, y, z);
+        }
+
+        // 處理滑鼠事件
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // 左鍵點擊處理
+        function onLeftClick(event) {
+            // 計算滑鼠在normalized device coordinates中的位置
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+            
+            // 設置射線從攝像機投射通過滑鼠位置
+            raycaster.setFromCamera(mouse, camera);
+            
+            // 計算物體與射線的交點
+            const intersects = raycaster.intersectObjects(shapes);
+            
+            if (intersects.length > 0) {
+                const clickedShape = intersects[0].object;
+                
+                // 生成隨機彈射方向
+                const direction = getRandomDirection();
+                
+                // 設置彈射速度
+                const bounceSpeed = 0.5;
+                clickedShape.userData.velocity.x = direction.x * bounceSpeed;
+                clickedShape.userData.velocity.y = direction.y * bounceSpeed;
+                clickedShape.userData.velocity.z = direction.z * bounceSpeed;
+                
+                // 標記為已點擊
+                clickedShape.userData.clicked = true;
+                clickedShape.userData.clickTime = Date.now();
+                
+                // 改變形狀顏色
+                clickedShape.material.emissive = new THREE.Color(0.5, 0.5, 0.5);
+                clickedShape.material.needsUpdate = true;
+            }
+        }
+
+        // 右鍵點擊處理 - 新增形狀
+        function onRightClick(event) {
+            event.preventDefault();
+            
+            // 計算滑鼠在normalized device coordinates中的位置
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+            
+            // 設置射線從攝像機投射通過滑鼠位置
+            raycaster.setFromCamera(mouse, camera);
+            
+            // 獲取射線方向
+            const dir = raycaster.ray.direction;
+            
+            // 創建一個新的形狀在射線方向上的一個位置
+            const distance = 10; // 從相機的距離
+            const x = camera.position.x + dir.x * distance;
+            const y = camera.position.y + dir.y * distance;
+            const z = camera.position.z + dir.z * distance;
+            
+            // 檢查位置是否在合理範圍内
+            const distFromCenter = Math.sqrt(x*x + y*y + z*z);
+            if (distFromCenter < 20) {
+                createShape(currentGeometryType, x, y, z);
+            } else {
+                // 如果太遠，創建在相機前方的隨機位置
+                createShape(currentGeometryType,
+                    (Math.random() - 0.5) * 10,
+                    (Math.random() - 0.5) * 10,
+                    camera.position.z - 5 - Math.random() * 5
+                );
+            }
+        }
+
+        // 鍵盤按下事件處理
+        function onKeyDown(event) {
+            if (cameraControls.keys.hasOwnProperty(event.code)) {
+                cameraControls.keys[event.code] = true;
+            }
+        }
+        
+        // 鍵盤鬆開事件處理
+        function onKeyUp(event) {
+            if (cameraControls.keys.hasOwnProperty(event.code)) {
+                cameraControls.keys[event.code] = false;
+            }
+        }
+
+        // 更新相機位置和方向
+        function updateCamera() {
+            // 使用方向鍵旋轉視角
+            if (cameraControls.keys.ArrowLeft) {
+                // 向左旋轉相機
+                camera.position.x = Math.cos(cameraControls.rotationSpeed) * camera.position.x - 
+                                  Math.sin(cameraControls.rotationSpeed) * camera.position.z;
+                camera.position.z = Math.sin(cameraControls.rotationSpeed) * camera.position.x + 
+                                  Math.cos(cameraControls.rotationSpeed) * camera.position.z;
+            }
+            if (cameraControls.keys.ArrowRight) {
+                // 向右旋轉相機
+                camera.position.x = Math.cos(-cameraControls.rotationSpeed) * camera.position.x - 
+                                  Math.sin(-cameraControls.rotationSpeed) * camera.position.z;
+                camera.position.z = Math.sin(-cameraControls.rotationSpeed) * camera.position.x + 
+                                  Math.cos(-cameraControls.rotationSpeed) * camera.position.z;
+            }
+            if (cameraControls.keys.ArrowUp) {
+                // 向上旋轉相機
+                const horizontalDist = Math.sqrt(camera.position.x * camera.position.x + 
+                                               camera.position.z * camera.position.z);
+                
+                // 計算當前相機仰角
+                let verticalAngle = Math.atan2(camera.position.y, horizontalDist);
+                verticalAngle += cameraControls.rotationSpeed;
+                
+                // 限制相機仰角範圍
+                verticalAngle = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, verticalAngle));
+                
+                // 計算新的y座標和水平距離
+                camera.position.y = Math.sin(verticalAngle) * 15;
+                const newHorizontalDist = Math.cos(verticalAngle) * 15;
+                
+                // 保持x/z方向的比例
+                const ratio = newHorizontalDist / horizontalDist;
+                camera.position.x *= ratio;
+                camera.position.z *= ratio;
+            }
+            if (cameraControls.keys.ArrowDown) {
+                // 向下旋轉相機
+                const horizontalDist = Math.sqrt(camera.position.x * camera.position.x + 
+                                               camera.position.z * camera.position.z);
+                
+                // 計算當前相機仰角
+                let verticalAngle = Math.atan2(camera.position.y, horizontalDist);
+                verticalAngle -= cameraControls.rotationSpeed;
+                
+                // 限制相機仰角範圍
+                verticalAngle = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, verticalAngle));
+                
+                // 計算新的y座標和水平距離
+                camera.position.y = Math.sin(verticalAngle) * 15;
+                const newHorizontalDist = Math.cos(verticalAngle) * 15;
+                
+                // 保持x/z方向的比例
+                const ratio = newHorizontalDist / horizontalDist;
+                camera.position.x *= ratio;
+                camera.position.z *= ratio;
+            }
+            
+            // 確保相機始終看向原點
+            camera.lookAt(0, 0, 0);
+        }
+
+        // 註冊按鈕事件
+        document.getElementById('cube-btn').addEventListener('click', function() {
+            currentGeometryType = 'cube';
+        });
+        
+        document.getElementById('tetra-btn').addEventListener('click', function() {
+            currentGeometryType = 'tetrahedron';
+        });
+        
+        document.getElementById('sphere-btn').addEventListener('click', function() {
+            currentGeometryType = 'sphere';
+        });
+
+        // 註冊滑鼠和鍵盤事件監聽器
+        window.addEventListener('click', onLeftClick, false);
+        window.addEventListener('contextmenu', onRightClick, false);
+        window.addEventListener('keydown', onKeyDown, false);
+        window.addEventListener('keyup', onKeyUp, false);
+
+        // 窗口大小調整
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 動畫循環
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // 更新相機位置和方向
+            updateCamera();
+            
+            const currentTime = Date.now();
+            const dampingFactor = 0.98; // 速度衰減因子
+            
+            // 更新每個形狀的旋轉和位置
+            shapes.forEach(shape => {
+                // 更新旋轉
+                shape.rotation.x += shape.userData.rotationSpeed.x;
+                shape.rotation.y += shape.userData.rotationSpeed.y;
+                shape.rotation.z += shape.userData.rotationSpeed.z;
+                
+                // 如果已被點擊，應用彈射物理效果
+                if (shape.userData.clicked) {
+                    // 更新位置
+                    shape.position.x += shape.userData.velocity.x;
+                    shape.position.y += shape.userData.velocity.y;
+                    shape.position.z += shape.userData.velocity.z;
+                    
+                    // 應用阻尼，使形狀逐漸減速
+                    shape.userData.velocity.x *= dampingFactor;
+                    shape.userData.velocity.y *= dampingFactor;
+                    shape.userData.velocity.z *= dampingFactor;
+                    
+                    // 如果速度足夠小或時間過長，停止移動並重置顏色
+                    const velocityMagnitude = Math.sqrt(
+                        shape.userData.velocity.x * shape.userData.velocity.x +
+                        shape.userData.velocity.y * shape.userData.velocity.y +
+                        shape.userData.velocity.z * shape.userData.velocity.z
+                    );
+                    
+                    // 3秒後或速度接近零時恢復正常
+                    if (velocityMagnitude < 0.001 || currentTime - shape.userData.clickTime > 3000) {
+                        shape.userData.clicked = false;
+                        shape.userData.velocity.x = 0;
+                        shape.userData.velocity.y = 0;
+                        shape.userData.velocity.z = 0;
+                        shape.material.emissive = new THREE.Color(0, 0, 0);
+                        shape.material.needsUpdate = true;
+                    }
+                }
+                
+                // 如果形狀移動太遠，將其拉回場景中心
+                const distanceFromCenter = Math.sqrt(
+                    shape.position.x * shape.position.x +
+                    shape.position.y * shape.position.y +
+                    shape.position.z * shape.position.z
+                );
+                
+                if (distanceFromCenter > 20) {
+                    // 慢慢將形狀拉回場景中央
+                    shape.position.x *= 0.95;
+                    shape.position.y *= 0.95;
+                    shape.position.z *= 0.95;
+                }
+            });
+            
+            renderer.render(scene, camera);
+        }
+
+        animate();
+    </script><canvas width="1491" height="906" style="display: block; width: 1491px; height: 906px;"></canvas>
+
+</body></html>
